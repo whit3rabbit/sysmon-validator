@@ -1,0 +1,9 @@
+<Sysmon schemaversion="4.30">
+  <EventFiltering>
+    <RuleGroup name="NonFilterableEventType">
+      <ServiceConfigurationChange onmatch="include">
+        <Image condition="is">C:\Windows\System32\cmd.exe</Image>
+      </ServiceConfigurationChange>
+    </RuleGroup>
+  </EventFiltering>
+</Sysmon>

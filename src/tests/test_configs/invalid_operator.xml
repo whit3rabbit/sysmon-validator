@@ -1,0 +1,9 @@
+<Sysmon schemaversion="4.30">
+  <EventFiltering>
+    <RuleGroup name="InvalidOperator">
+      <ProcessCreate onmatch="include">
+        <Image condition="unknown_operator">C:\Windows\System32\cmd.exe</Image>
+      </ProcessCreate>
+    </RuleGroup>
+  </EventFiltering>
+</Sysmon>

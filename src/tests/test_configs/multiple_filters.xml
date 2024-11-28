@@ -1,0 +1,12 @@
+<Sysmon schemaversion="4.30">
+  <EventFiltering>
+    <RuleGroup name="MultipleFilters">
+      <ProcessCreate onmatch="include">
+        <Image condition="is">C:\Windows\System32\cmd.exe</Image>
+      </ProcessCreate>
+      <ProcessCreate onmatch="include">
+        <Image condition="is">C:\Windows\System32\notepad.exe</Image>
+      </ProcessCreate>
+    </RuleGroup>
+  </EventFiltering>
+</Sysmon>

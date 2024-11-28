@@ -1,0 +1,33 @@
+[package]
+name = "sysmon_validator"
+version = "0.1.0"
+edition = "2021"
+authors = ["whiterabbit@protonmail.com"]
+
+[lib]
+name = "sysmon_validator"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sysmon_validator"
+path = "src/main.rs"
+
+[dependencies]
+quick-xml = "0.26"
+thiserror = "2.0.3"
+log = "0.4.22"
+env_logger = "0.9"
+colored = "2.1.0"
+
+[dev-dependencies]
+tempfile = "3.14.0"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = true
