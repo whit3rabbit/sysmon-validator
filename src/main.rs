@@ -2,6 +2,8 @@ use std::env;
 use std::fs;
 use colored::Colorize;
 use env_logger;
+use quick_xml::events::Event as XmlEvent;
+use quick_xml::Reader;
 
 use sysmon_validator::{
     parse_sysmon_config,
@@ -39,6 +41,67 @@ fn main() {
     }
 }
 
+fn find_xml_line_context(content: &str, search_term: &str) -> Option<usize> {
+    let mut reader = Reader::from_str(content);
+    reader.trim_text(true);
+    reader.check_comments(true);
+    
+    let mut buf = Vec::new();
+
+    // Track actual XML elements containing our search term
+    let mut found_in_actual_xml = false;
+    let mut found_line = None;
+    
+    // Split content into lines and handle empty lines
+    let lines: Vec<&str> = content.lines()
+        .map(|line| line.trim())
+        .collect();
+    
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(XmlEvent::Comment(_)) => {
+                // Skip comments
+                continue;
+            },
+            Ok(XmlEvent::Start(e)) | Ok(XmlEvent::Empty(e)) => {
+                for attr in e.attributes().flatten() {
+                    let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+                    let value = String::from_utf8_lossy(&attr.value).into_owned();
+                    
+                    if key == "condition" && value == search_term {
+                        // Found a match in actual XML content
+                        found_in_actual_xml = true;
+                        
+                        // Find the line containing this attribute
+                        for (idx, line) in lines.iter().enumerate() {
+                            if !line.trim_start().starts_with("<!--") && 
+                               line.contains(&format!("condition=\"{}\"", value)) {
+                                found_line = Some(idx + 1);
+                                break;
+                            }
+                        }
+                    }
+                }
+            },
+            Ok(XmlEvent::Eof) => break,
+            Err(e) => {
+                eprintln!("Error while parsing XML for error context: {}", e);
+                break;
+            },
+            _ => {}
+        }
+        
+        buf.clear();
+    }
+
+    // Only return a line number if we found the term in actual XML content
+    if found_in_actual_xml {
+        found_line
+    } else {
+        None
+    }
+}
+
 fn print_validation_error(error: ValidationError, config_path: &str) {
     // Read the configuration file content
     let content = fs::read_to_string(config_path).unwrap_or_default();
@@ -61,10 +124,9 @@ fn print_validation_error(error: ValidationError, config_path: &str) {
                 "Invalid Configuration".red(),
                 operator);
             
-            // Find and print the line containing the invalid operator
-            if let Some((line_num, _line)) = lines.iter().enumerate()
-                .find(|(_, &line)| line.contains(&operator)) {
-                print_error_context(lines.as_slice(), line_num);
+            // Find and print the line containing the invalid operator using XML-aware search
+            if let Some(line_num) = find_xml_line_context(&content, &operator) {
+                print_error_context(lines.as_slice(), line_num - 1);  // -1 because line numbers are 0-based in the array
             }
         }
         ValidationError::MultipleFilters(event_type) => {
@@ -172,5 +234,58 @@ fn print_rule_group_context(lines: &[&str], start_line: usize) {
     println!("\n{}:", "Rule Group Context".yellow());
     for (i, line) in rule_group_lines {
         println!("  {:4} | {}", i + 1, line.red());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sysmon_validator::parser::parse_sysmon_config_from_str;
+    use sysmon_validator::validate_sysmon_config;
+
+    #[test]
+    fn test_xml_comment_handling() {
+        let xml_content = r#"<!-- Line 1: Comment with begin with -->
+<!-- Line 2: Another comment -->
+<Sysmon schemaversion="4.30">
+    <EventFiltering>
+        <RuleGroup name="TestGroup">
+            <ProcessCreate onmatch="include">
+                <Image condition="begin with">C:\Windows</Image>
+            </ProcessCreate>
+        </RuleGroup>
+    </EventFiltering>
+</Sysmon>"#;
+        
+        // Test that the find_xml_line_context function ignores comments
+        let line_num = find_xml_line_context(xml_content, "begin with");
+        assert!(line_num.is_some(), "Should find 'begin with' in actual XML content");
+        assert_eq!(line_num.unwrap(), 7, "Operator should be found on line 7");
+        
+        // Test that validation succeeds since the actual XML uses valid 'begin with'
+        let config = parse_sysmon_config_from_str(xml_content).unwrap();
+        let result = validate_sysmon_config(&config);
+        assert!(result.is_ok(), "Should validate successfully with correct operator");
+    }
+
+    #[test]
+    fn test_find_xml_line_context_with_actual_content() {
+        let xml_content = r#"<!-- Line 1: Comment with operators -->
+<!-- Line 2: Another comment -->
+<Sysmon>
+    <EventFiltering>
+        <!-- Comment -->
+        <RuleGroup>
+            <ProcessCreate>
+                <Image condition="begin with">test</Image>
+            </ProcessCreate>
+        </RuleGroup>
+    </EventFiltering>
+</Sysmon>"#;
+
+        // Test finding the operator
+        let line_num = find_xml_line_context(xml_content, "begin with");
+        assert!(line_num.is_some(), "Should find 'begin with' in actual XML content");
+        assert_eq!(line_num.unwrap(), 8, "Operator should be found on line 8");
     }
 }

@@ -137,22 +137,22 @@ pub fn validate_sysmon_config(config: &SysmonConfig) -> Result<(), ValidationErr
 fn validate_condition(field: &Field) -> Result<(), ValidationError> {
     let valid_operators = vec![
         "is",
-        "is not",
         "is any",
+        "is not",
         "contains",
-        "excludes",
-        "excludes all",
-        "excludes any",
-        "image",
-        "begins with",
-        "not begins with",
-        "ends with",
-        "not ends with",
-        "lessthan",
-        "morethan",
-        "contain any",
+        "contains any",
         "contains all",
-    ];
+        "excludes",
+        "excludes any",
+        "excludes all",
+        "begin with",
+        "not begin with",
+        "end with",
+        "not end with",
+        "less than",
+        "more than",
+        "image",
+        ];
 
     // Convert operator to lowercase for comparison
     if let Some(ref operator) = field.condition {
