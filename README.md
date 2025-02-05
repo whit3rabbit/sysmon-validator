@@ -1,210 +1,208 @@
-# Sysmon Config Validator
+# Sysmon Configuration Validator
 
-A robust validation tool for Sysmon configuration files, available both as a command-line utility and a Rust library.
+A comprehensive Rust library and command-line tool for validating Sysmon configuration files. Performs both structural validation and XSD schema validation to ensure your Sysmon configurations are correct and compatible.
 
 ## Features
 
-- Validates Sysmon configuration XML files
-- Checks for schema version compatibility (minimum 4.22)
-- Validates event types and operators
-- Ensures proper rule group structure
-- Provides detailed error messages with context
-- Can be used as both a CLI tool and a library
+- Full XSD schema validation against official Sysmon schemas
+- Support for multiple schema versions (4.22 and above)
+- Intelligent schema version selection and compatibility
+- Comprehensive validation including:
+  - XML structure and syntax
+  - Rule group relationships and structure
+  - Event field formats and requirements
+  - Event type compatibility
+  - Field value formats (GUIDs, timestamps, paths, etc.)
+  - Include/exclude filter logic
+- Detailed error reporting with context
+- Both command-line and library interfaces
 
-## Command-Line Usage
+## Installation
 
-### Installation
+### From Source
 
 ```bash
-# Clone the repository
-git clone https://github.com/whit3rabbit/sysmon-validator.git
-cd sysmon-validator
-
-# Build the project
+git clone https://github.com/whit3rabbit/sysmon_validator
+cd sysmon_validator
 cargo build --release
-
-# The binary will be available in target/release/sysmon_validator
 ```
 
-### Using the CLI
+The compiled binary will be available at `target/release/sysmon_validator`
+
+### Schema Files
+
+Place your XSD schema files in one of these locations:
+
+- `./schemas/`
+- `./src/schemas/`
+- Same directory as the executable
+
+Schema files should follow one of these naming patterns:
+
+- `v4_22_schema.xsd`
+- `sysmonconfig-schema-4.22.xsd`
+
+## Command Line Usage
+
+Basic validation:
 
 ```bash
-sysmon_validator path/to/your/sysmonconfig.xml
+sysmon_validator path/to/sysmonconfig.xml
 ```
 
-If the configuration is valid, you'll see:
+With additional options:
 
 ```bash
-✓ Sysmon configuration is valid.
+sysmon_validator path/to/sysmonconfig.xml --verbose
+sysmon_validator path/to/sysmonconfig.xml --debug
 ```
 
-If there are issues, you'll get detailed error messages with context, for example:
+### Command Line Options
 
-```bash
-Invalid Configuration: Schema version 3.50 is not supported (minimum required: 4.22)
-
-Context:
-    1 | <?xml version="1.0" encoding="UTF-8"?>
-  > 2 | <Sysmon schemaversion="3.50">
-    3 |   <EventFiltering>
-```
+- `--verbose`: Show detailed validation information and error context
+- `--debug`: Show debug information including schema validation details
 
 ## Library Usage
 
-### Add as a Dependency
-
-Add this to your `Cargo.toml`:
+Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-sysmon_validator = { git = "https://github.com/whit3rabbit/sysmon-validator.git" }
+sysmon_validator = { git = "https://github.com/whit3rabbit/sysmon_validator" }
 ```
 
 ### Basic Validation
-
-#### From File
 
 ```rust
 use sysmon_validator::validate_config;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     match validate_config("path/to/config.xml") {
-        Ok(()) => println!("Configuration is valid!"),
-        Err(e) => eprintln!("Configuration error: {}", e),
+        Ok(()) => println!("Configuration is valid"),
+        Err(e) => eprintln!("Validation error: {}", e),
     }
     Ok(())
 }
 ```
 
-#### From String
+### String Validation
 
 ```rust
-use std::fs;
 use sysmon_validator::validate_config_from_str;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Get XML content (e.g., from a file, but could be from any source)
-    let xml_content = fs::read_to_string("path/to/config.xml")?;
-    
-    match validate_config_from_str(&xml_content) {
-        Ok(()) => println!("Configuration is valid!"),
-        Err(e) => eprintln!("Configuration error: {}", e),
-    }
+fn validate_my_config(xml_content: &str) -> Result<(), Box<dyn std::error::Error>> {
+    validate_config_from_str(xml_content)?;
     Ok(())
 }
 ```
 
-### Advanced Usage
-
-For more control over the validation process, you can use the parser and validator separately:
-
-#### Working with Files
-
-```rust
-use sysmon_validator::{parse_sysmon_config, validate_sysmon_config};
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Parse the configuration from file
-    let config = parse_sysmon_config("path/to/config.xml")?;
-    
-    // Do something with the parsed config if needed
-    println!("Schema version: {:?}", config.schema_version);
-    
-    // Validate the configuration
-    validate_sysmon_config(&config)?;
-    
-    Ok(())
-}
-```
-
-#### Working with Strings
+### Custom Validation Pipeline
 
 ```rust
 use sysmon_validator::{parse_sysmon_config_from_str, validate_sysmon_config};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let xml_content = r#"
-        <Sysmon schemaversion="4.30">
-            <EventFiltering>
-                <RuleGroup name="Example">
-                    <ProcessCreate onmatch="include">
-                        <Image condition="is">C:\Windows\System32\cmd.exe</Image>
-                    </ProcessCreate>
-                </RuleGroup>
-            </EventFiltering>
-        </Sysmon>
-    "#;
-
-    // Parse the configuration from string
+fn custom_validation(xml_content: &str) -> Result<(), Box<dyn std::error::Error>> {
+    // Parse the configuration
     let config = parse_sysmon_config_from_str(xml_content)?;
     
-    // Access parsed configuration
-    if let Some(ef) = &config.event_filtering {
-        for rule_group in &ef.rule_groups {
-            println!("Rule group: {:?}", rule_group.name);
-            for event in &rule_group.events {
-                println!("Event type: {}", event.event_type);
-            }
-        }
-    }
+    // Perform custom pre-validation checks
+    // ...
     
-    // Validate the configuration
+    // Perform standard validation
     validate_sysmon_config(&config)?;
     
+    // Perform custom post-validation checks
+    // ...
+    
     Ok(())
 }
 ```
 
-### Error Handling
+## Schema Versioning
 
-Both file and string-based methods provide the same error types:
+The validator supports Sysmon configuration schema versions 4.22 and above. It automatically selects the most appropriate schema version for validation based on the `schemaversion` attribute in your configuration file.
 
-```rust
-use sysmon_validator::{
-    parse_sysmon_config_from_str,
-    validate_sysmon_config,
-    errors::ValidationError
-};
+### Version Compatibility
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let xml_content = fs::read_to_string("config.xml")?;
-    let config = match parse_sysmon_config_from_str(&xml_content) {
-        Ok(config) => config,
-        Err(e) => {
-            eprintln!("Failed to parse configuration: {}", e);
-            return Ok(());
-        }
-    };
+When validating a configuration file with version X.YY:
 
-    match validate_sysmon_config(&config) {
-        Ok(()) => println!("Configuration is valid!"),
-        Err(e) => match e {
-            ValidationError::InvalidSchemaVersion(version) => {
-                eprintln!("Invalid schema version {}, minimum required is 4.22", version);
-            }
-            ValidationError::UnsupportedOperator(op) => {
-                eprintln!("Unsupported operator: {}", op);
-            }
-            ValidationError::MultipleFilters(event_type) => {
-                eprintln!("Multiple filters found for event type: {}", event_type);
-            }
-            ValidationError::InvalidEventType(event_type) => {
-                eprintln!("Invalid event type: {}", event_type);
-            }
-            ValidationError::NonFilterableEventType(event_type) => {
-                eprintln!("Event type cannot be filtered: {}", event_type);
-            }
-            ValidationError::MultipleEventTypesInRuleGroup(group) => {
-                eprintln!("Multiple event types in rule group: {}", group);
-            }
-        }
-    }
-    Ok(())
-}
-```
+1. The validator looks for an exact matching schema version
+2. If not found, it uses the highest available schema version that's lower than X.YY
+3. Returns an error if no compatible schema version is found
 
-## Running Tests
+## Validation Coverage
+
+### Event Types
+
+Supports all standard Sysmon event types including:
+
+- ProcessCreate (Event ID 1)
+- FileCreateTime (Event ID 2)
+- NetworkConnect (Event ID 3)
+- ProcessTerminate (Event ID 5)
+- DriverLoad (Event ID 6)
+- ImageLoad (Event ID 7)
+- CreateRemoteThread (Event ID 8)
+- RawAccessRead (Event ID 9)
+- ProcessAccess (Event ID 10)
+- FileCreate (Event ID 11)
+- RegistryEvent (Event IDs 12,13,14)
+- FileCreateStreamHash (Event ID 15)
+- PipeEvent (Event IDs 17,18)
+- WmiEvent (Event IDs 19,20,21)
+- DnsQuery (Event ID 22)
+- FileDelete (Event ID 23)
+- ClipboardChange (Event ID 24)
+- ProcessTampering (Event ID 25)
+- FileDeleteDetected (Event ID 26)
+- FileBlockExecutable (Event ID 27)
+- FileBlockShredding (Event ID 28)
+- FileExecutableDetected (Event ID 29)
+
+### Field Validation
+
+Validates various field formats including:
+
+- Windows paths and file names
+- IPv4 and IPv6 addresses
+- Port numbers
+- Registry paths
+- UTC timestamps
+- GUIDs
+- Hash values (MD5, SHA1, SHA256, IMPHASH)
+- Process IDs
+- Boolean values
+
+## Error Messages
+
+The validator provides detailed error messages with context for:
+
+- Schema version mismatches
+- XML syntax errors
+- Invalid event types
+- Invalid field names or formats
+- Missing required fields
+- Invalid operators or conditions
+- Multiple filter conflicts
+- Rule group validation errors
+
+## Development
+
+### Running Tests
 
 ```bash
 cargo test
 ```
+
+### Debug Logging
+
+```bash
+RUST_LOG=debug cargo run -- path/to/config.xml
+```
+
+### Contributing
+
+1. Ensure all tests pass
+2. Add tests for new features
+3. Update documentation for changes
+4. Follow Rust formatting guidelines

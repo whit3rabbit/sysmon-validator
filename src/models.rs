@@ -30,7 +30,7 @@ pub struct Event {
     pub fields: Vec<Field>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Field {
     pub name: String,
     pub condition: Option<String>,

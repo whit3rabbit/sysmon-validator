@@ -12,25 +12,59 @@ use sysmon_validator::{
 };
 
 fn main() {
-    // Initialize the logger
-    env_logger::init();
+    // Initialize the logger with a custom format
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format(|buf, record| {
+            use std::io::Write;
+            let level_color = match record.level() {
+                log::Level::Error => "red",
+                log::Level::Warn => "yellow",
+                log::Level::Info => "green",
+                _ => "white",
+            };
+            writeln!(
+                buf,
+                "{} {}",
+                record.level().to_string().color(level_color),
+                record.args()
+            )
+        })
+        .init();
 
     // Get the configuration file path from command-line arguments
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         eprintln!("{}", "Usage: sysmon_validator <path_to_sysmon_config.xml>".red());
+        eprintln!("Optional flags:");
+        eprintln!("  --verbose    Show detailed validation information");
+        eprintln!("  --debug      Show debug information including schema validation details");
         std::process::exit(1);
     }
-    let config_path = &args[1];
 
-    // Parse the Sysmon configuration
+    let config_path = &args[1];
+    let verbose = args.iter().any(|arg| arg == "--verbose");
+    let debug = args.iter().any(|arg| arg == "--debug");
+
+    // Parse and validate the Sysmon configuration
     match parse_sysmon_config(config_path) {
         Ok(config) => {
+            if debug {
+                println!("{}", "Parsed configuration successfully.".green());
+                if let Some(version) = &config.schema_version {
+                    println!("Schema version: {}", version);
+                }
+            }
+
             // Validate the configuration
             if let Err(e) = validate_sysmon_config(&config) {
-                print_validation_error(e, config_path);
+                print_validation_error(&e, config_path, verbose);
                 std::process::exit(1);
             } else {
+                if verbose {
+                    println!("\n{}", "Configuration structure validation passed.".green());
+                }
+
+                // Print overall success message
                 println!("{}", "✓ Sysmon configuration is valid.".green());
             }
         }
@@ -43,36 +77,28 @@ fn main() {
 
 fn find_xml_line_context(content: &str, search_term: &str) -> Option<usize> {
     let mut reader = Reader::from_str(content);
-    reader.trim_text(true);
-    reader.check_comments(true);
+    reader.config_mut().trim_text(true);
+    reader.config_mut().check_comments = true; 
     
     let mut buf = Vec::new();
-
-    // Track actual XML elements containing our search term
     let mut found_in_actual_xml = false;
     let mut found_line = None;
     
-    // Split content into lines and handle empty lines
     let lines: Vec<&str> = content.lines()
         .map(|line| line.trim())
         .collect();
     
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(XmlEvent::Comment(_)) => {
-                // Skip comments
-                continue;
-            },
+            Ok(XmlEvent::Comment(_)) => continue,
             Ok(XmlEvent::Start(e)) | Ok(XmlEvent::Empty(e)) => {
                 for attr in e.attributes().flatten() {
                     let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
                     let value = String::from_utf8_lossy(&attr.value).into_owned();
                     
                     if key == "condition" && value == search_term {
-                        // Found a match in actual XML content
                         found_in_actual_xml = true;
                         
-                        // Find the line containing this attribute
                         for (idx, line) in lines.iter().enumerate() {
                             if !line.trim_start().starts_with("<!--") && 
                                line.contains(&format!("condition=\"{}\"", value)) {
@@ -94,7 +120,6 @@ fn find_xml_line_context(content: &str, search_term: &str) -> Option<usize> {
         buf.clear();
     }
 
-    // Only return a line number if we found the term in actual XML content
     if found_in_actual_xml {
         found_line
     } else {
@@ -102,97 +127,82 @@ fn find_xml_line_context(content: &str, search_term: &str) -> Option<usize> {
     }
 }
 
-fn print_validation_error(error: ValidationError, config_path: &str) {
+fn print_validation_error(error: &ValidationError, config_path: &str, verbose: bool) {
     // Read the configuration file content
     let content = fs::read_to_string(config_path).unwrap_or_default();
     let lines: Vec<&str> = content.lines().collect();
 
     match error {
         ValidationError::InvalidSchemaVersion(version) => {
-            eprintln!("{}: Schema version {} is not supported (minimum required: 4.22)", 
+            eprintln!("{}: Schema version {} is not supported", 
                 "Invalid Configuration".red(),
                 version);
             
-            // Find and print the line containing schemaversion
-            if let Some((line_num, _line)) = lines.iter().enumerate()
-                .find(|(_, &line)| line.contains(&version) && line.contains("schemaversion")) {
-                print_error_context(lines.as_slice(), line_num);
+            if verbose {
+                println!("Supported schema versions: 4.22 and above");
+                if let Some((line_num, _line)) = lines.iter().enumerate()
+                    .find(|(_, &line)| line.contains(version) && line.contains("schemaversion")) {
+                    print_error_context(lines.as_slice(), line_num);
+                }
             }
-        }
-        ValidationError::UnsupportedOperator(operator) => {
+        },
+        ValidationError::SchemaValidationError(msg) => {
+            eprintln!("{}: {}", 
+                "Schema Validation Error".red(),
+                msg);
+            
+            if verbose {
+                println!("The configuration does not match the schema requirements.");
+            }
+        },
+        ValidationError::SchemaValidationFailed(msg) => {
+            eprintln!("{}: {}", 
+                "Schema Validation Failed".red(),
+                msg);
+            
+            if verbose {
+                println!("Failed to validate against schema requirements.");
+            }
+        },
+        ValidationError::NoMatchingSchema(version) => {
+            eprintln!("{}: No compatible schema found for version {}", 
+                "Schema Error".red(),
+                version);
+            
+            if verbose {
+                println!("Please use a supported Sysmon schema version.");
+            }
+        },
+        ValidationError::UnsupportedOperator(op) => {
             eprintln!("{}: Unsupported operator '{}'", 
                 "Invalid Configuration".red(),
-                operator);
+                op);
             
-            // Find and print the line containing the invalid operator using XML-aware search
-            if let Some(line_num) = find_xml_line_context(&content, &operator) {
-                print_error_context(lines.as_slice(), line_num - 1);  // -1 because line numbers are 0-based in the array
+            if let Some(line_num) = find_xml_line_context(&content, op) {
+                print_error_context(lines.as_slice(), line_num - 1);
             }
-        }
+        },
         ValidationError::MultipleFilters(event_type) => {
-            eprintln!("{}: Multiple include/exclude filters found for event type '{}'",
+            eprintln!("{}: Multiple include/exclude filters for event type '{}'",
                 "Invalid Configuration".red(),
                 event_type);
             
-            // Find and print lines containing the event type
             let matching_lines: Vec<(usize, &&str)> = lines.iter().enumerate()
-                .filter(|(_, &line)| line.contains(&event_type))
+                .filter(|(_, &line)| line.contains(event_type))
                 .collect();
             
             for (line_num, _) in matching_lines {
                 print_error_context(lines.as_slice(), line_num);
-                println!();  // Add separator between multiple instances
+                println!();
             }
-        }
-        ValidationError::MultipleEventTypesInRuleGroup(group_name) => {
-            eprintln!("{}: Multiple event types found in rule group '{}'",
-                "Invalid Configuration".red(),
-                group_name);
-            
-            // Find the RuleGroup and print its contents
-            if let Some(start_line) = lines.iter().enumerate()
-                .find(|(_, &line)| line.contains(&group_name)) {
-                print_rule_group_context(lines.as_slice(), start_line.0);
-            }
-        }
-        ValidationError::InvalidEventType(event_type) => {
-            eprintln!("{}: Invalid event type '{}'",
-                "Invalid Configuration".red(),
-                event_type);
-            
-            // Find and print the line containing the invalid event type
-            if let Some((line_num, _line)) = lines.iter().enumerate()
-                .find(|(_, &line)| line.contains(&event_type)) {
-                print_error_context(lines.as_slice(), line_num);
-            }
-        }
-        ValidationError::NonFilterableEventType(event_type) => {
-            eprintln!("{}: Event type '{}' cannot be filtered",
-                "Invalid Configuration".red(),
-                event_type);
-            
-            // Find and print the line containing the non-filterable event type
-            if let Some((line_num, _line)) = lines.iter().enumerate()
-                .find(|(_, &line)| line.contains(&event_type)) {
-                print_error_context(lines.as_slice(), line_num);
-            }
-        }
-        ValidationError::InvalidGroupRelation(value) => {
-            eprintln!("{}: Invalid groupRelation value '{}'",
-                "Invalid Configuration".red(),
-                value);
-            
-            // Find and print the line containing the invalid groupRelation
-            if let Some((line_num, _line)) = lines.iter().enumerate()
-                .find(|(_, &line)| line.contains("groupRelation") && line.contains(&value)) {
-                print_error_context(lines.as_slice(), line_num);
-            }
+        },
+        _ => {
+            eprintln!("{}: {}", "Validation Error".red(), error);
         }
     }
 }
 
 fn print_error_context(lines: &[&str], error_line: usize) {
-    // Print line numbers and content for context
     let start_line = error_line.saturating_sub(2);
     let end_line = (error_line + 3).min(lines.len());
 
@@ -208,35 +218,6 @@ fn print_error_context(lines: &[&str], error_line: usize) {
     }
 }
 
-fn print_rule_group_context(lines: &[&str], start_line: usize) {
-    let mut depth = 0;
-    let mut in_rule_group = false;
-    let mut rule_group_lines = Vec::new();
-
-    for (i, &line) in lines.iter().enumerate().skip(start_line) {
-        if line.contains("<RuleGroup") {
-            in_rule_group = true;
-            depth += 1;
-        }
-        
-        if in_rule_group {
-            rule_group_lines.push((i, line));
-        }
-        
-        if line.contains("</RuleGroup>") {
-            depth -= 1;
-            if depth == 0 {
-                break;
-            }
-        }
-    }
-
-    println!("\n{}:", "Rule Group Context".yellow());
-    for (i, line) in rule_group_lines {
-        println!("  {:4} | {}", i + 1, line.red());
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,48 +225,33 @@ mod tests {
     use sysmon_validator::validate_sysmon_config;
 
     #[test]
-    fn test_xml_comment_handling() {
-        let xml_content = r#"<!-- Line 1: Comment with begin with -->
-<!-- Line 2: Another comment -->
-<Sysmon schemaversion="4.30">
-    <EventFiltering>
-        <RuleGroup name="TestGroup">
-            <ProcessCreate onmatch="include">
-                <Image condition="begin with">C:\Windows</Image>
-            </ProcessCreate>
-        </RuleGroup>
-    </EventFiltering>
-</Sysmon>"#;
+    fn test_error_context_finding() {
+        let xml = r#"
+                <!-- Comment with is -->
+                <ProcessCreate>
+                    <Image condition="is">test.exe</Image>
+                </ProcessCreate>"#;
         
-        // Test that the find_xml_line_context function ignores comments
-        let line_num = find_xml_line_context(xml_content, "begin with");
-        assert!(line_num.is_some(), "Should find 'begin with' in actual XML content");
-        assert_eq!(line_num.unwrap(), 7, "Operator should be found on line 7");
-        
-        // Test that validation succeeds since the actual XML uses valid 'begin with'
-        let config = parse_sysmon_config_from_str(xml_content).unwrap();
-        let result = validate_sysmon_config(&config);
-        assert!(result.is_ok(), "Should validate successfully with correct operator");
+        let line = find_xml_line_context(xml, "is");
+        assert!(line.is_some());
+        assert_eq!(line.unwrap(), 4);
     }
 
     #[test]
-    fn test_find_xml_line_context_with_actual_content() {
-        let xml_content = r#"<!-- Line 1: Comment with operators -->
-<!-- Line 2: Another comment -->
-<Sysmon>
-    <EventFiltering>
-        <!-- Comment -->
-        <RuleGroup>
-            <ProcessCreate>
-                <Image condition="begin with">test</Image>
-            </ProcessCreate>
-        </RuleGroup>
-    </EventFiltering>
-</Sysmon>"#;
+    fn test_validation_error_display() {
+        let xml = r#"
+            <Sysmon schemaversion="3.0">
+                <EventFiltering>
+                    <RuleGroup name="Test">
+                        <ProcessCreate onmatch="include">
+                            <Image condition="is">test.exe</Image>
+                        </ProcessCreate>
+                    </RuleGroup>
+                </EventFiltering>
+            </Sysmon>"#;
 
-        // Test finding the operator
-        let line_num = find_xml_line_context(xml_content, "begin with");
-        assert!(line_num.is_some(), "Should find 'begin with' in actual XML content");
-        assert_eq!(line_num.unwrap(), 8, "Operator should be found on line 8");
+        let config = parse_sysmon_config_from_str(xml).unwrap();
+        let result = validate_sysmon_config(&config);
+        assert!(result.is_err());
     }
 }

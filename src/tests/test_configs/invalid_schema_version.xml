@@ -1,9 +1,0 @@
-<Sysmon schemaversion="3.50">
-  <EventFiltering>
-    <RuleGroup name="InvalidSchemaVersion">
-      <ProcessCreate onmatch="include">
-        <Image condition="is">C:\Windows\System32\cmd.exe</Image>
-      </ProcessCreate>
-    </RuleGroup>
-  </EventFiltering>
-</Sysmon>
