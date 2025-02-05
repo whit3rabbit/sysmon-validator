@@ -5,6 +5,7 @@ A comprehensive Rust library and command-line tool for validating Sysmon configu
 ## Features
 
 - Full XSD schema validation against official Sysmon schemas
+- Built-in schema support with embedded XSD files
 - Support for multiple schema versions (4.22 and above)
 - Intelligent schema version selection and compatibility
 - Comprehensive validation including:
@@ -29,18 +30,9 @@ cargo build --release
 
 The compiled binary will be available at `target/release/sysmon_validator`
 
-### Schema Files
+### Schema Support
 
-Place your XSD schema files in one of these locations:
-
-- `./schemas/`
-- `./src/schemas/`
-- Same directory as the executable
-
-Schema files should follow one of these naming patterns:
-
-- `v4_22_schema.xsd`
-- `sysmonconfig-schema-4.22.xsd`
+XSD schema files are now embedded directly into the binary, eliminating the need for external schema files. However, you can still load additional or custom schemas if needed using the `XsdValidator::load_schemas()` method.
 
 ## Command Line Usage
 
@@ -116,6 +108,17 @@ fn custom_validation(xml_content: &str) -> Result<(), Box<dyn std::error::Error>
     
     Ok(())
 }
+```
+
+### Loading Additional Schemas
+
+While schemas are embedded by default, you can load additional custom schemas if needed:
+
+```rust
+use sysmon_validator::XsdValidator;
+
+let mut validator = XsdValidator::new(); // Creates validator with embedded schemas
+validator.load_schemas("path/to/custom/schemas")?; // Load additional schemas
 ```
 
 ## Schema Versioning
@@ -199,10 +202,3 @@ cargo test
 ```bash
 RUST_LOG=debug cargo run -- path/to/config.xml
 ```
-
-### Contributing
-
-1. Ensure all tests pass
-2. Add tests for new features
-3. Update documentation for changes
-4. Follow Rust formatting guidelines
